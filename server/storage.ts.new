@@ -1,0 +1,313 @@
+import { 
+  users, type User, type InsertUser, 
+  attendance, type Attendance, type InsertAttendance,
+  locations, type Location, type InsertLocation,
+  distances, type Distance, type InsertDistance,
+  payroll, type Payroll, type InsertPayroll,
+  services, type Service, type InsertService,
+  UserRole, ServiceType
+} from "@shared/schema";
+import { db } from "./db";
+import { eq, and, gte, lte } from "drizzle-orm";
+
+export interface IStorage {
+  // User operations
+  getUser(id: number): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, user: Partial<InsertUser>): Promise<User | undefined>;
+  getUsers(): Promise<User[]>;
+  getUsersByRole(role: string): Promise<User[]>;
+  
+  // Attendance operations
+  createAttendance(attendance: InsertAttendance): Promise<Attendance>;
+  getAttendanceByUserId(userId: number): Promise<Attendance[]>;
+  getAttendanceByUserIdAndDate(userId: number, date: Date): Promise<Attendance | undefined>;
+  updateAttendance(id: number, attendance: Partial<InsertAttendance>): Promise<Attendance | undefined>;
+  getTodayAttendance(): Promise<Attendance[]>;
+  
+  // Location operations
+  saveLocation(location: InsertLocation): Promise<Location>;
+  getLocationsByUserId(userId: number): Promise<Location[]>;
+  getLocationsByUserIdAndDateRange(userId: number, startDate: Date, endDate: Date): Promise<Location[]>;
+  
+  // Distance operations
+  saveDistance(distance: InsertDistance): Promise<Distance>;
+  getDistanceByUserIdAndDate(userId: number, date: Date): Promise<Distance | undefined>;
+  getDistancesByUserIdAndDateRange(userId: number, startDate: Date, endDate: Date): Promise<Distance[]>;
+  
+  // Payroll operations
+  createPayroll(payroll: InsertPayroll): Promise<Payroll>;
+  getPayrollByUserId(userId: number): Promise<Payroll[]>;
+  getPayrollByPeriod(startDate: Date, endDate: Date): Promise<Payroll[]>;
+  
+  // Services operations
+  createService(service: InsertService): Promise<Service>;
+  getServices(): Promise<Service[]>;
+  getServiceById(id: number): Promise<Service | undefined>;
+  updateService(id: number, service: Partial<InsertService>): Promise<Service | undefined>;
+}
+
+export class DatabaseStorage implements IStorage {
+  // User operations
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+  
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
+  }
+  
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db.insert(users).values(insertUser).returning();
+    return user;
+  }
+  
+  async updateUser(id: number, userData: Partial<InsertUser>): Promise<User | undefined> {
+    const [updatedUser] = await db
+      .update(users)
+      .set(userData)
+      .where(eq(users.id, id))
+      .returning();
+    return updatedUser;
+  }
+  
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users);
+  }
+  
+  async getUsersByRole(role: string): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.role, role));
+  }
+  
+  // Attendance operations
+  async createAttendance(insertAttendance: InsertAttendance): Promise<Attendance> {
+    const [newAttendance] = await db.insert(attendance).values(insertAttendance).returning();
+    return newAttendance;
+  }
+  
+  async getAttendanceByUserId(userId: number): Promise<Attendance[]> {
+    return await db.select().from(attendance).where(eq(attendance.userId, userId));
+  }
+  
+  async getAttendanceByUserIdAndDate(userId: number, date: Date): Promise<Attendance | undefined> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const [record] = await db.select().from(attendance).where(
+      and(
+        eq(attendance.userId, userId),
+        gte(attendance.checkInTime, startOfDay),
+        lte(attendance.checkInTime, endOfDay)
+      )
+    );
+    
+    return record;
+  }
+  
+  async updateAttendance(id: number, attendanceData: Partial<InsertAttendance>): Promise<Attendance | undefined> {
+    const [updatedAttendance] = await db
+      .update(attendance)
+      .set(attendanceData)
+      .where(eq(attendance.id, id))
+      .returning();
+    return updatedAttendance;
+  }
+  
+  async getTodayAttendance(): Promise<Attendance[]> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    return await db.select().from(attendance).where(
+      and(
+        gte(attendance.checkInTime, startOfDay),
+        lte(attendance.checkInTime, endOfDay)
+      )
+    );
+  }
+  
+  // Location operations
+  async saveLocation(insertLocation: InsertLocation): Promise<Location> {
+    const [newLocation] = await db.insert(locations).values(insertLocation).returning();
+    return newLocation;
+  }
+  
+  async getLocationsByUserId(userId: number): Promise<Location[]> {
+    return await db
+      .select()
+      .from(locations)
+      .where(eq(locations.userId, userId))
+      .orderBy((location) => location.timestamp, "desc");
+  }
+  
+  async getLocationsByUserIdAndDateRange(userId: number, startDate: Date, endDate: Date): Promise<Location[]> {
+    return await db
+      .select()
+      .from(locations)
+      .where(
+        and(
+          eq(locations.userId, userId),
+          gte(locations.timestamp, startDate),
+          lte(locations.timestamp, endDate)
+        )
+      )
+      .orderBy((location) => location.timestamp, "asc");
+  }
+  
+  // Distance operations
+  async saveDistance(insertDistance: InsertDistance): Promise<Distance> {
+    const [newDistance] = await db.insert(distances).values(insertDistance).returning();
+    return newDistance;
+  }
+  
+  async getDistanceByUserIdAndDate(userId: number, date: Date): Promise<Distance | undefined> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const [record] = await db.select().from(distances).where(
+      and(
+        eq(distances.userId, userId),
+        gte(distances.date, startOfDay),
+        lte(distances.date, endOfDay)
+      )
+    );
+    
+    return record;
+  }
+  
+  async getDistancesByUserIdAndDateRange(userId: number, startDate: Date, endDate: Date): Promise<Distance[]> {
+    return await db
+      .select()
+      .from(distances)
+      .where(
+        and(
+          eq(distances.userId, userId),
+          gte(distances.date, startDate),
+          lte(distances.date, endDate)
+        )
+      );
+  }
+  
+  // Payroll operations
+  async createPayroll(insertPayroll: InsertPayroll): Promise<Payroll> {
+    const [newPayroll] = await db.insert(payroll).values(insertPayroll).returning();
+    return newPayroll;
+  }
+  
+  async getPayrollByUserId(userId: number): Promise<Payroll[]> {
+    return await db
+      .select()
+      .from(payroll)
+      .where(eq(payroll.userId, userId))
+      .orderBy((p) => p.periodEnd, "desc");
+  }
+  
+  async getPayrollByPeriod(startDate: Date, endDate: Date): Promise<Payroll[]> {
+    return await db
+      .select()
+      .from(payroll)
+      .where(
+        and(
+          gte(payroll.periodStart, startDate),
+          lte(payroll.periodEnd, endDate)
+        )
+      );
+  }
+  
+  // Services operations
+  async createService(insertService: InsertService): Promise<Service> {
+    const [newService] = await db.insert(services).values(insertService).returning();
+    return newService;
+  }
+  
+  async getServices(): Promise<Service[]> {
+    return await db.select().from(services);
+  }
+  
+  async getServiceById(id: number): Promise<Service | undefined> {
+    const [service] = await db.select().from(services).where(eq(services.id, id));
+    return service;
+  }
+  
+  async updateService(id: number, serviceData: Partial<InsertService>): Promise<Service | undefined> {
+    const [updatedService] = await db
+      .update(services)
+      .set(serviceData)
+      .where(eq(services.id, id))
+      .returning();
+    return updatedService;
+  }
+
+  // Initialize default data
+  async initializeDefaultData() {
+    // Check if we have any users already (to avoid duplicate data)
+    const existingUsers = await this.getUsers();
+    if (existingUsers.length === 0) {
+      // Add admin user
+      await this.createUser({
+        username: "admin",
+        password: "admin123", // In a real app, use proper password hashing
+        name: "Admin User",
+        role: UserRole.ADMIN,
+        active: true,
+        basePayRate: 1000,
+      });
+      
+      // Add sample services
+      await this.createService({
+        name: "AC Repair & Service",
+        description: "Full service maintenance, repair & installation",
+        serviceType: ServiceType.AC_REPAIR,
+        techniciansCount: 5,
+        popularity: "most_requested",
+      });
+      
+      await this.createService({
+        name: "Refrigerator Service",
+        description: "Cooling issues, ice maker repairs & maintenance",
+        serviceType: ServiceType.REFRIGERATOR,
+        techniciansCount: 4,
+        popularity: "popular",
+      });
+      
+      await this.createService({
+        name: "Washing Machine Repair",
+        description: "Leaks, error codes, noise issues & installations",
+        serviceType: ServiceType.WASHING_MACHINE,
+        techniciansCount: 3,
+        popularity: "regular",
+      });
+      
+      await this.createService({
+        name: "Microwave Repair",
+        description: "Electronic troubleshooting & replacements",
+        serviceType: ServiceType.MICROWAVE,
+        techniciansCount: 2,
+        popularity: "regular",
+      });
+    }
+  }
+}
+
+export const storage = new DatabaseStorage();
+
+// Initialize the database with default data
+(async () => {
+  try {
+    await storage.initializeDefaultData();
+    console.log("Database initialized with default data");
+  } catch (error) {
+    console.error("Error initializing database:", error);
+  }
+})();
